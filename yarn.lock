@@ -863,9 +863,9 @@
     "@prisma/debug" "5.22.0"
 
 "@prisma/prisma-schema-wasm@5.22.0":
-  version "7.10.0-8.shadow-db-safety-s4-52d3b3c7e4002ee167a8803802fa11ced0e2c163"
-  resolved "https://registry.yarnpkg.com/@prisma/prisma-schema-wasm/-/prisma-schema-wasm-7.10.0-8.shadow-db-safety-s4-52d3b3c7e4002ee167a8803802fa11ced0e2c163.tgz#fe7190ff528f9e2fbe1429ea072e178ca832fced"
-  integrity sha512-881rNkPMbTbBvLumGtL237OhZC/qnzvRSexc9o+YLvE+yo3kCWqBhMiLsDO8QT0uP+6ePkmopmh8lqxYKNGnxQ==
+  version "8.1.0-2.59be4fda12412a79eeb9c2ae727b6aa723593323"
+  resolved "https://registry.yarnpkg.com/@prisma/prisma-schema-wasm/-/prisma-schema-wasm-8.1.0-2.59be4fda12412a79eeb9c2ae727b6aa723593323.tgz#77adfd920e81173d263a3b17e47b625e1ab92fda"
+  integrity sha512-F8LD5fANVr6MYESAgXwjjx43u9mJx/Tbvx+IDa9EhslI8VFBurW9A2kM1BVb+TKXmniwX7H1P08gAlCmoOmpGA==
 
 "@remix-run/router@1.23.3":
   version "1.23.3"
