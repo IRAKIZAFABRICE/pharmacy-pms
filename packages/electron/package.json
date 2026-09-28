@@ -1,0 +1,110 @@
+{
+  "name": "pharmacy-pms",
+  "version": "1.0.0",
+  "config": {
+    "electronDist": "./electron-cache",
+    "electron_skip_binary_download": "1"
+  },
+  "description": "Pharmacy Management System Desktop App",
+  "author": "Irakiza",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/IRAKIZA/PMS.git"
+  },
+  "main": "dist/main.js",
+  "scripts": {
+    "kill": "node scripts/kill-all.js",
+    "kill:all": "npm run kill",
+    "clean": "powershell -Command \"Remove-Item -Recurse -Force release -ErrorAction SilentlyContinue; exit 0\"",
+    "clean:dist": "if exist dist rmdir /s /q dist & if exist tsconfig.tsbuildinfo del /q tsconfig.tsbuildinfo",
+    "build": "tsc",
+    "stage:backend": "node scripts/stage-backend.js",
+    "prestage:backend": "npm run kill:all",
+    "prepackage": "npm run kill:all && npm run build && npm run stage:backend",
+    "pack": "npm run prepackage && electron-builder --dir --publish never",
+    "dist": "npm run prepackage && electron-builder --publish never",
+    "release:publish": "npm run prepackage && electron-builder --publish always",
+    "release:github": "npm run prepackage && electron-builder --publish github",
+    "update:server": "node scripts/update-server.js",
+    "update:copy": "node scripts/copy-updates.js",
+    "update:upload": "node scripts/upload-s3.js",
+    "dev": "electron-cache\\electron.exe . --dev",
+    "start": "tsc --watch",
+    "start:dev": "npm run kill:all && npm run build && electron-cache\\electron.exe . --dev",
+    "pack:fast": "npm run prepackage && electron-builder --dir -c.compression=store --publish never"
+  },
+  "build": {
+    "appId": "com.pharmacy.pms",
+    "productName": "Pharmacy PMS",
+    "electronDist": "./electron-cache",
+    "electronDownload": {
+      "mirror": "file:./electron-cache"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "IRAKIZA",
+      "repo": "PMS",
+      "releaseType": "release"
+    },
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/pgsql",
+        "to": "pgsql",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/frontend-dist",
+        "to": "frontend-dist",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "staged/backend",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!node_modules",
+          "!node_modules/**"
+        ]
+      },
+      {
+        "from": "staged/backend/node_modules",
+        "to": "backend/node_modules",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "electron-updater": "^6.2.1",
+    "pg": "^8.11.0"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1101.0",
+    "electron": "43.1.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.4.0"
+  }
+}

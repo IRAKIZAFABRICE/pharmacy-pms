@@ -1,0 +1,883 @@
+// packages/backend/prisma/schema.prisma
+// Schema with UUIDs and sync fields for offline-first multi-user support
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============= ENUMS =============
+
+enum UserRole {
+  ADMIN
+  OWNER
+  PHARMACIST
+  NURSE
+  ACCOUNTANT
+}
+
+enum PaymentMethod {
+  CASH
+  MOBILE_MONEY
+  INSURANCE
+  CARD
+  OTHER
+}
+
+enum RRAStatus {
+  PENDING
+  SUBMITTED
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum PurchaseStatus {
+  PENDING
+  RECEIVED
+  CANCELLED
+}
+
+enum ClaimStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  PAID
+}
+
+enum SyncAction {
+  CREATED
+  UPDATED
+  DELETED
+}
+
+
+// ============= SYNC METADATA (base fields for every model) =============
+
+/// Sync fields that every syncable model should include
+model SyncMetadata {
+  id        String   @id @default(uuid())
+  modelName String
+  recordId  String
+  deviceId  String
+  action    SyncAction
+  version   Int      @default(1)
+  syncedAt  DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  @@index([modelName])
+  @@index([syncedAt])
+  @@index([deviceId])
+  @@map("sync_metadata")
+}
+
+// ============= USER MANAGEMENT =============
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  phone         String?
+  role          UserRole
+  isActive      Boolean   @default(true)
+  lastLogin     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  sales         Sale[]
+  purchases     PurchaseOrder[]
+
+  auditLogs     AuditLog[]
+  stockAdjustments StockAdjustment[]
+  notifications Notification[]
+  purchaseInvoices PurchaseInvoice[]
+  priceChanges  PriceChangeHistory[]
+
+  @@map("users")
+}
+
+// ============= CORE INVENTORY =============
+
+model Product {
+  id              String    @id @default(uuid())
+  code            String    @unique
+  name            String
+  category        String?
+  subCategory     String?
+  description     String?
+  isPrescription  Boolean   @default(false)
+  isControlled    Boolean   @default(false)
+  unitOfMeasure   String    @default("Tablet")
+  reorderLevel    Int       @default(10)
+  taxRate         Float     @default(0)
+  isActive        Boolean   @default(true)
+  costPrice       Float     @default(0)
+  sellingPrice    Float     @default(0)
+  stockQuantity   Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  batches         Batch[]
+  saleItems       SaleItem[]
+  purchaseItems   PurchaseItem[]
+  stockAdjustments StockAdjustment[]
+  insuranceCoverageRules InsuranceCoverageRule[]
+  supplierProducts SupplierProduct[]
+  purchaseInvoiceItems PurchaseInvoiceItem[]
+  priceChanges    PriceChangeHistory[]
+  deliveries      DeliverySchedule[]
+
+  @@map("products")
+}
+
+model Batch {
+  id                  String    @id @default(uuid())
+  batchNumber         String
+  expiryDate          DateTime
+  quantity            Int
+  initialQuantity     Int
+  costPrice           Float     @default(0)
+  sellingPrice        Float     @default(0)
+  containerSize       Int       @default(1)
+  quantityPerContainer Int?
+  containerCost       Float?
+  productId           String
+  supplierId          String?
+  dateReceived        DateTime  @default(now())
+  isActive            Boolean   @default(true)
+  isConfirmed         Boolean   @default(false)
+  invoiceNumber       String?   
+  invoiceAmount       Float     @default(0)
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  product         Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  supplier        Supplier? @relation(fields: [supplierId], references: [id])
+  saleItems       SaleItem[]
+  purchaseItems   PurchaseItem[]
+  stockAdjustments StockAdjustment[]
+
+  @@unique([batchNumber, productId])
+  @@index([expiryDate])
+  @@index([productId])
+  @@index([batchNumber])
+  @@index([isConfirmed])
+  @@map("batches")
+}
+
+model Supplier {
+  id              String    @id @default(uuid())
+  code            String    @unique
+  name            String
+  tin             String?
+  email           String?
+  phone           String
+  address         String?
+  contactPerson   String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  batches         Batch[]
+  purchaseOrders  PurchaseOrder[]
+  supplierProducts SupplierProduct[]
+  purchaseInvoices PurchaseInvoice[]
+  priceChanges    PriceChangeHistory[]
+
+  @@map("suppliers")
+}
+
+// ============= SUPPLIER PRODUCT CATALOG =============
+
+model SupplierProduct {
+  id                String    @id @default(uuid())
+  supplierId        String
+  productId         String
+  lastCostPrice     Float?    
+  lastSellingPrice  Float?    
+  lastMarkup        Float?    
+  lastPurchaseDate  DateTime?
+  lastInvoiceNumber String?   
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  supplier          Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  product           Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierId, productId])
+  @@index([supplierId])
+  @@index([productId])
+  @@index([lastPurchaseDate])
+  @@map("supplier_products")
+}
+
+// ============= PURCHASE INVOICES =============
+
+model PurchaseInvoice {
+  id              String    @id @default(uuid())
+  invoiceNo       String    @unique
+  supplierId      String
+  userId          String
+  date            DateTime  @default(now())
+  totalAmount     Float?
+  status          PurchaseStatus @default(PENDING)
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  supplier        Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [userId], references: [id])
+  items           PurchaseInvoiceItem[]
+  priceChanges    PriceChangeHistory[]
+
+  @@index([invoiceNo])
+  @@index([supplierId])
+  @@index([date])
+  @@map("purchase_invoices")
+}
+
+model PurchaseInvoiceItem {
+  id              String    @id @default(uuid())
+  invoiceId       String
+  productId       String
+  batchNo         String
+  quantity        Int
+  expiryDate      DateTime
+  costPrice       Float
+  sellingPrice    Float?
+  packSize        String?
+  isNewProduct    Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  invoice         PurchaseInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product         Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@index([productId])
+  @@index([batchNo])
+  @@map("purchase_invoice_items")
+}
+
+// ============= SALES & POS =============
+
+model Sale {
+  id              String        @id @default(uuid())
+  invoiceNumber   String        @unique
+  saleDate        DateTime      @default(now())
+  customerName    String?
+  customerPhone   String?
+  customerEmail   String?
+  subtotal        Float         @default(0)
+  taxAmount       Float         @default(0)
+  discount        Float         @default(0)
+  discountType    String?
+  totalAmount     Float         @default(0)
+  paymentMethod   PaymentMethod
+  paymentReference String?
+  isCancelled     Boolean       @default(false)
+  cancellationReason String?
+  cancelledAt     DateTime?
+  
+  rraReceiptNumber String?      @unique
+  rraStatus       RRAStatus     @default(PENDING)
+  rraQRCode       String?
+  rraSubmittedAt  DateTime?
+  rraResponse     Json?
+  
+  insuranceClaim  InsuranceClaim?
+
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  customerId      String?
+  customer        Customer?     @relation(fields: [customerId], references: [id])
+  saleItems       SaleItem[]
+
+  auditLogs       AuditLog[]
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  @@index([invoiceNumber])
+  @@index([saleDate])
+  @@index([rraReceiptNumber])
+  @@map("sales")
+}
+
+model SaleItem {
+  id              String    @id @default(uuid())
+  saleId          String
+  batchId         String
+  productId       String
+  quantity        Int
+  unitPrice       Float
+  totalPrice      Float
+  discount        Float     @default(0)
+  
+  sale            Sale      @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  batch           Batch     @relation(fields: [batchId], references: [id])
+  product         Product   @relation(fields: [productId], references: [id])
+
+  @@map("sale_items")
+}
+
+// ============= PURCHASE ORDERS =============
+
+model PurchaseOrder {
+  id              String        @id @default(uuid())
+  orderNumber     String        @unique
+  supplierId      String
+  orderDate       DateTime      @default(now())
+  expectedDate    DateTime?
+  receivedDate    DateTime?
+  status          PurchaseStatus @default(PENDING)
+  subtotal        Float         @default(0)
+  taxAmount       Float         @default(0)
+  totalAmount     Float         @default(0)
+  notes           String?
+  userId          String
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  supplier        Supplier      @relation(fields: [supplierId], references: [id])
+  user            User          @relation(fields: [userId], references: [id])
+  purchaseItems   PurchaseItem[]
+
+  @@index([orderNumber])
+  @@index([status])
+  @@map("purchase_orders")
+}
+
+model PurchaseItem {
+  id              String    @id @default(uuid())
+  purchaseOrderId String
+  productId       String
+  quantity        Int
+  unitCost        Float
+  totalCost       Float
+  batchNumber     String?
+  batchId         String?
+  
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product         Product       @relation(fields: [productId], references: [id])
+  batch           Batch?        @relation(fields: [batchId], references: [id])
+
+  @@map("purchase_items")
+}
+
+// ============= INSURANCE MODULE =============
+
+model InsuranceCompany {
+  id              String    @id @default(uuid())
+  code            String    @unique
+  name            String
+  description     String?
+  coveragePercentage Float  @default(80.0)
+  maxCoverageAmount Float?
+  websiteUrl      String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  claims          InsuranceClaim[]
+  coverageRules   InsuranceCoverageRule[]
+
+  @@map("insurance_companies")
+}
+
+model InsuranceCoverageRule {
+  id              String    @id @default(uuid())
+  insuranceCompanyId String
+  productCategory String?
+  productId       String?
+  coveragePercentage Float
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  insuranceCompany InsuranceCompany @relation(fields: [insuranceCompanyId], references: [id], onDelete: Cascade)
+  product         Product?          @relation(fields: [productId], references: [id])
+
+  @@map("insurance_coverage_rules")
+}
+
+model InsuranceClaim {
+  id              String    @id @default(uuid())
+  claimNumber     String    @unique
+  saleId          String    @unique
+  patientName     String
+  patientId       String?
+  patientPhone    String?
+  policyNumber    String?
+  insuranceCompanyId String
+  claimAmount     Float
+  coverageAmount  Float
+  copayAmount     Float
+  status          ClaimStatus @default(DRAFT)
+  rejectionReason String?
+  submittedAt     DateTime?
+  approvedAt      DateTime?
+  paidAt          DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  sale            Sale                @relation(fields: [saleId], references: [id])
+  insuranceCompany InsuranceCompany   @relation(fields: [insuranceCompanyId], references: [id])
+
+  @@index([claimNumber])
+  @@index([status])
+  @@map("insurance_claims")
+}
+
+// ============= STOCK ADJUSTMENTS =============
+
+model StockAdjustment {
+  id              String    @id @default(uuid())
+  productId       String
+  batchId         String?
+  userId          String
+  quantity        Int
+  previousQuantity Int?
+  reason          String
+  notes           String?
+  createdAt       DateTime  @default(now())
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  product         Product   @relation(fields: [productId], references: [id])
+  batch           Batch?    @relation(fields: [batchId], references: [id])
+  user            User      @relation(fields: [userId], references: [id])
+
+  @@index([productId])
+  @@index([batchId])
+  @@map("stock_adjustments")
+}
+
+// ============= AUDIT LOGS =============
+
+model AuditLog {
+  id              String    @id @default(uuid())
+  userId          String?
+  action          String
+  entity          String?
+  entityId        String?
+  details         Json?
+  ipAddress       String?
+  userAgent       String?
+  timestamp       DateTime  @default(now())
+  saleId          String?
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  user            User?     @relation(fields: [userId], references: [id])
+  sale            Sale?     @relation(fields: [saleId], references: [id])
+
+  @@index([timestamp])
+  @@index([userId])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+// ============= NOTIFICATIONS =============
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  severity  String
+  read      Boolean  @default(false)
+  readAt    DateTime?
+  action    String?
+  data      Json?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// ============= CUSTOMERS / CLIENTS =============
+
+enum CustomerType {
+  REGULAR
+  SPECIAL
+  WHOLESALE
+  INSTITUTIONAL
+}
+
+enum AccountType {
+  DEBIT
+  CREDIT
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum DeliveryStatus {
+  SCHEDULED
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+enum CollaboratorType {
+  PHARMACY
+  DOCTOR
+  HOSPITAL
+  CLINIC
+  HEALTHCARE_INSTITUTION
+  OTHER
+}
+
+enum PatientRecordType {
+  BMI
+  BLOOD_PRESSURE
+  CHOLESTEROL
+  GLUCOSE
+  TEMPERATURE
+  HUMIDITY
+  OTHER
+}
+
+model Customer {
+  id              String       @id @default(uuid())
+  code            String       @unique
+  name            String
+  phone           String
+  email           String?
+  address         String?
+  customerType    CustomerType @default(REGULAR)
+  isActive        Boolean      @default(true)
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  account         CustomerAccount?
+  transactions    CustomerTransaction[]
+  deliveries      DeliverySchedule[]
+  patientRecords  PatientRecord[]
+  sales           Sale[]
+
+  @@index([code])
+  @@index([phone])
+  @@index([customerType])
+  @@map("customers")
+}
+
+model CustomerAccount {
+  id              String        @id @default(uuid())
+  customerId      String        @unique
+  accountType     AccountType   @default(DEBIT)
+  balance         Float         @default(0)
+  creditLimit     Float         @default(0)
+  status          AccountStatus @default(ACTIVE)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  customer        Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  transactions    CustomerTransaction[]
+
+  @@map("customer_accounts")
+}
+
+model CustomerTransaction {
+  id              String    @id @default(uuid())
+  customerId      String
+  accountId       String
+  type            String    // PAYMENT, DEBIT, CREDIT, ADJUSTMENT
+  amount          Float
+  balanceAfter    Float
+  reference       String?   // invoice number, receipt number, etc.
+  description     String?
+  saleId          String?
+  createdBy       String?
+  createdAt       DateTime  @default(now())
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  account         CustomerAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([accountId])
+  @@index([createdAt])
+  @@map("customer_transactions")
+}
+
+model DeliverySchedule {
+  id              String          @id @default(uuid())
+  customerId      String
+  productId       String?
+  deliveryDate    DateTime
+  quantity        Int
+  status          DeliveryStatus  @default(SCHEDULED)
+  address         String?
+  notes           String?
+  deliveredBy     String?
+  deliveredAt     DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product         Product?  @relation(fields: [productId], references: [id])
+
+  @@index([customerId])
+  @@index([deliveryDate])
+  @@index([status])
+  @@map("delivery_schedules")
+}
+
+// ============= COLLABORATORS =============
+
+model Collaborator {
+  id              String            @id @default(uuid())
+  code            String            @unique
+  name            String
+  type            CollaboratorType
+  phone           String
+  email           String?
+  address         String?
+  licenseNumber   String?
+  specialization  String?
+  institutionName String?
+  isActive        Boolean           @default(true)
+  notes           String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  @@index([code])
+  @@index([type])
+  @@map("collaborators")
+}
+
+// ============= PATIENT MONITORING & CALCULATOR =============
+
+model PatientRecord {
+  id              String            @id @default(uuid())
+  customerId      String?
+  patientName     String
+  patientAge      Int?
+  patientWeight   Float?
+  patientHeight   Float?
+  recordType      PatientRecordType
+  value           Float
+  unit            String
+  notes           String?
+  recordedBy      String?
+  recordedAt      DateTime          @default(now())
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  customer        Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([recordType])
+  @@index([recordedAt])
+  @@map("patient_records")
+}
+
+model DoseCalculation {
+  id              String    @id @default(uuid())
+  patientName     String
+  patientAge      Int?
+  patientWeight   Float?
+  medication      String
+  dosePerKg       Float?
+  calculatedDose  Float
+  unit            String
+  frequency       String?
+  duration        String?
+  notes           String?
+  calculatedBy    String?
+  createdAt       DateTime  @default(now())
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  @@index([medication])
+  @@index([createdAt])
+  @@map("dose_calculations")
+}
+
+model DeviceRecord {
+  id              String    @id @default(uuid())
+  deviceName      String
+  deviceType      String    // THERMOMETER, HYGROMETER, REFRIGERATOR, etc.
+  temperature     Float?
+  humidity        Float?
+  readingTime     DateTime  @default(now())
+  location        String?
+  notes           String?
+  recordedBy      String?
+  createdAt       DateTime  @default(now())
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  @@index([deviceName])
+  @@index([readingTime])
+  @@map("device_records")
+}
+
+// ============= PRICE CHANGE HISTORY =============
+
+model PriceChangeHistory {
+  id              String    @id @default(uuid())
+  supplierId      String
+  productId       String
+  oldCostPrice    Float
+  newCostPrice    Float
+  oldSellingPrice Float?
+  newSellingPrice Float?
+  changedBy       String
+  invoiceId       String?
+  changeDate      DateTime  @default(now())
+  reason          String?
+  notes           String?
+
+  // Sync fields
+  syncVersion   Int       @default(0)
+  deviceId      String?
+  isDeleted     Boolean   @default(false)
+  lastSyncedAt  DateTime?
+
+  supplier        Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  product         Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [changedBy], references: [id])
+  purchaseInvoice PurchaseInvoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@index([supplierId])
+  @@index([productId])
+  @@index([changeDate])
+  @@map("price_change_history")
+}
